@@ -79,12 +79,14 @@ struct experiment_perceptron : predictor
     reg<LINEINST> block_entry;
 
     // ---- RAMs ----
-    region P2_TABLES;
+    // P2 weight tables
     ram<val<WBITS, i64>, (1 << index2_bits)> wtable[NTABLES][LINEINST]{{"P2 weight"}};
+    // auxiliary feature weights
     ram<val<AUX_WBITS, i64>, (1 << aux_index_bits)> lwtable[LINEINST]{"P2 aux weight"};
 
-    region P1_TABLES;
+    // P1 prediction bits
     ram<val<1>, (1 << index1_bits)> table1_pred[LINEINST]{"P1 pred"};
+    // P1 hysteresis bits
     zone UPDATE_ONLY;
     ram<val<1>, (1 << index1_bits)> table1_hyst[LINEINST]{"P1 hyst"};
 
@@ -401,7 +403,7 @@ struct experiment_perceptron : predictor
         {
             execute_if(train[offset], [&]()
                        {
-                for (u64 i = 0; i < NTABLES; i++) {
+                for (u64 i=0; i<NTABLES; i++) {
                     wtable[i][offset].write(index2[i], update_ctr(readw[offset][i], ~branch_taken[offset]));
                 } });
         }
