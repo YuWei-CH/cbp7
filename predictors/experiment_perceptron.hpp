@@ -1,3 +1,5 @@
+#pragma once
+
 #include "../cbp.hpp"
 #include "../harcom.hpp"
 #include "common.hpp"
@@ -5,6 +7,94 @@
 #include <array>
 
 using namespace hcm;
+
+template <u64 F>
+struct perceptron_folded_gh_lfsr
+{
+    static_assert(F != 0);
+
+    arr<reg<1>, F> folded;
+
+    val<F> get()
+    {
+        return folded.concat();
+    }
+
+    void fanout(hardval auto fo)
+    {
+        folded.fanout(fo);
+    }
+
+    template <u64 MAXL>
+    void update(global_history<MAXL> &gh, hardval auto ghlen, valtype auto in)
+    {
+        (void)gh;
+        (void)ghlen;
+        auto input = in.fo1().make_array(val<1>{});
+        val<1> out = folded[F - 1].fo1();
+        for (u64 i = F - 1; i > 0; i--)
+        {
+            folded[i] = folded[i - 1];
+        }
+        folded[0] = input[0].fo1() ^ out;
+    }
+};
+
+template <u64 NH, u64 MINH, u64 MAXH, u64... FOLDS>
+struct perceptron_geometric_folds_lfsr
+{
+    static_assert(NH >= 2);
+    static constexpr u64 NF = sizeof...(FOLDS);
+
+    static constexpr auto HLEN = []()
+    {
+        std::array<u64, NH> hlen;
+        u64 prevhl = 0;
+        for (u64 i = 0; i < NH; i++)
+        {
+            u64 hl = MINH * mypow(f64(MAXH) / MINH, f64(i) / (NH - 1));
+            hl = std::max(prevhl + 1, hl);
+            hlen[NH - 1 - i] = hl;
+            prevhl = hl;
+        }
+        return hlen;
+    }();
+
+    static_assert(HLEN[0] == MAXH);
+
+    global_history<MAXH> gh;
+    std::array<std::tuple<perceptron_folded_gh_lfsr<FOLDS>...>, NH> folds;
+
+    template <u64 J = 0>
+    auto get(u64 i)
+    {
+        if (i >= NH)
+        {
+            std::cerr << "perceptron geometric folds lfsr: out of bound access\n";
+            std::terminate();
+        }
+        return std::get<J>(folds[i]).get();
+    }
+
+    void fanout(hardval auto fo)
+    {
+        for (u64 i = 0; i < NH; i++)
+        {
+            static_loop<NF>([&]<u64 J>()
+                            { std::get<J>(folds[i]).fanout(fo); });
+        }
+    }
+
+    void update(valtype auto branchbits)
+    {
+        branchbits.fanout(hard<NH * NF + 1>{});
+        gh.fanout(hard<std::max(u64(2), NF + 1)>{});
+        static_loop<NH>([&]<u64 I>()
+                        { static_loop<NF>([&]<u64 J>()
+                                          { std::get<J>(folds[I]).update(gh, hard<HLEN[I]>{}, branchbits); }); });
+        gh.update(branchbits);
+    }
+};
 
 template <
     u64 LOGLB = 6,               // 64B fetch block
@@ -47,7 +137,7 @@ struct experiment_perceptron : predictor
     static_assert(AUX_ACTIVE <= LINEINST);
     static_assert(AUX_SIGN_BIAS < (1ull << (YBITS - 1)));
 
-    geometric_folds<NUMHIST, MINHIST, MAXHIST, index2_bits> gfolds;
+    perceptron_geometric_folds_lfsr<NUMHIST, MINHIST, MAXHIST, index2_bits> gfolds;
     reg<1> true_block = 1;
     reg<PATHBITS> path_history;
 
